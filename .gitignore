@@ -1,1 +1,7 @@
 .direnv
+.vscode
+cache
+out
+
+web/bin
+web/node_modules
