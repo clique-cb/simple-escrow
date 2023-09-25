@@ -1,0 +1,22 @@
+{
+  "name": "@clique/merkle",
+  "version": "1.0.0",
+  "description": "Sized merkle tree implementation",
+  "author": "Dmitrii Mukhutdinov",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "/dist"
+  ],
+  "dependencies": {
+    "@types/node": "^20.6.3",
+    "binary-searching": "^2.0.5",
+    "cbor": "^9.0.1",
+    "keccak256": "^1.0.6",
+    "typescript": "^5.2.2"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.1"
+  }
+}

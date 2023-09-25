@@ -1,18 +1,4 @@
 {
-  "name": "simple-escrow-web",
-  "version": "1.0.0",
-  "description": "Simple multipart data escrow web app",
-  "main": "src/index.ts",
-  "author": "Dmitrii Mukhutdinov",
-  "license": "MIT",
-  "dependencies": {
-    "@types/node": "^20.6.3",
-    "binary-searching": "^2.0.5",
-    "cbor-x": "^1.5.4",
-    "keccak256": "^1.0.6",
-    "typescript": "^5.2.2"
-  },
-  "devDependencies": {
-    "ts-node": "^10.9.1"
-  }
+  "private": true,
+  "workspaces": ["packages/*"]
 }

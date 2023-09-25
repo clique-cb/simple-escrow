@@ -1,36 +1,22 @@
 import keccak256 from "keccak256";
-import * as cbor from "cbor-x";
+import * as CBOR from "cbor";
 import * as bs from "binary-searching";
 
-export const cborEncoder = new cbor.Encoder();
-
-export type Hash = Uint8Array;
-
-export const hashesEqual = (a: Hash, b: Hash): boolean => {
-    if (a.length !== b.length) {
-        return false;
-    }
-    for (let i = 0; i < a.length; ++i) {
-        if (a[i] !== b[i]) {
-            return false;
-        }
-    }
-    return true;
-}
+export type Hash = Buffer;
 
 export const hashFromHex = (hex: string): Hash => {
     if (hex.startsWith("0x")) {
         hex = hex.slice(2);
     }
-    return new Uint8Array(Buffer.from(hex, "hex"));
+    return Buffer.from(hex, "hex");
 }
 
-export const hashRaw = (cbor: Uint8Array): Hash => {
+export const hashRaw = (cbor: Buffer): Hash => {
     return keccak256(cbor);
 }
 
 export const hashSerializable = (obj: any): Hash => {
-    const data = cborEncoder.encode(obj);
+    const data = CBOR.encode(obj);
     return keccak256(data);
 }
 
@@ -49,22 +35,11 @@ export class MerkleSig {
         this.size = size;
         this.hash = hash;
     }
-}
 
-// @ts-ignore
-cbor.addExtension({
-    Class: MerkleSig,
-    // @ts-ignore
-    encode(sig: MerkleSig, encodeFn) {
-        console.log("I CALLED")
-        encodeFn(1043);
-        encodeFn(sig.size);
-        encodeFn(Buffer.from(sig.hash));
-    },
-    decode(item: any) {
-        return new MerkleSig(item[0], new Uint8Array(item[1]));
+    encodeCBOR(encoder: CBOR.Encoder): boolean {
+        return encoder._pushNumber(1043) && encoder.pushAny(this.size) && encoder.pushAny(this.hash);
     }
-})
+}
 
 const hashTwoSignatures = (a: MerkleSig, b: MerkleSig): Hash => {
     const data = new Uint8Array(4 + 32 + 4 + 32);
@@ -82,10 +57,10 @@ const combineTwoSigs = (a: MerkleSig, b: MerkleSig): MerkleSig => {
 
 // Trees
 
-export type MerkleNode = MerkleLeaf | MerkleBranch;
+export type MerkleNode<T> = MerkleLeaf<T> | MerkleBranch<T>;
 
-export class MerkleLeaf {
-    value: any;
+export class MerkleLeaf<T> {
+    value: T;
     sig: MerkleSig;
 
     constructor(value: any) {
@@ -94,12 +69,12 @@ export class MerkleLeaf {
     }
 }
 
-export class MerkleBranch {
-    left: MerkleNode;
-    right: MerkleNode;
+export class MerkleBranch<T> {
+    left: MerkleNode<T>
+    right: MerkleNode<T>;
     sig: MerkleSig;
 
-    constructor(left: MerkleNode, right: MerkleNode) {
+    constructor(left: MerkleNode<T>, right: MerkleNode<T>) {
         this.left = left;
         this.right = right;
         this.sig = combineTwoSigs(left.sig, right.sig);
@@ -108,10 +83,10 @@ export class MerkleBranch {
 
 // Proofs
 
-export type MerkleProofNode = MerkleProofLeaf | MerkleProofPruned | MerkleProofBranch;
+export type MerkleProofNode<T> = MerkleProofLeaf<T> | MerkleProofPruned | MerkleProofBranch<T>;
 
-export class MerkleProofLeaf {
-    value: any;
+export class MerkleProofLeaf<T> {
+    value: T;
 
     constructor(value: any) {
         this.value = value;
@@ -126,17 +101,17 @@ export class MerkleProofPruned {
     }
 }
 
-export class MerkleProofBranch {
-    left: MerkleProofNode;
-    right: MerkleProofNode;
+export class MerkleProofBranch<T> {
+    left: MerkleProofNode<T>;
+    right: MerkleProofNode<T>;
 
-    constructor(left: MerkleProofNode, right: MerkleProofNode) {
+    constructor(left: MerkleProofNode<T>, right: MerkleProofNode<T>) {
         this.left = left;
         this.right = right;
     }
 }
 
-export const restoreRoot = (proof: MerkleProofNode): MerkleSig => {
+export const restoreRoot = (proof: MerkleProofNode<any>): MerkleSig => {
     if (proof instanceof MerkleProofLeaf) {
         return new MerkleSig(1, hashSerializable(proof.value));
     }
@@ -151,17 +126,17 @@ export const restoreRoot = (proof: MerkleProofNode): MerkleSig => {
 }
 
 
-export const verifyProof = (proof: MerkleProofNode, root: MerkleSig): boolean => {
+export const verifyProof = (proof: MerkleProofNode<any>, root: MerkleSig): boolean => {
     const proofRoot = restoreRoot(proof);
-    return hashesEqual(proofRoot.hash, root.hash) && proofRoot.size === root.size;
+    return proofRoot.hash.equals(root.hash) && proofRoot.size === root.size;
 }
 
 // Interface
 
-export class MerkleTree {
-    root?: MerkleNode;
+export class MerkleTree<T> {
+    root?: MerkleNode<T>;
 
-    constructor(root?: MerkleNode) {
+    constructor(root?: MerkleNode<T>) {
         this.root = root;
     }
 
@@ -183,7 +158,7 @@ export class MerkleTree {
         return this.root!.sig;
     }
 
-    makeProof(index: number | number[]): MerkleProofNode {
+    makeProof(index: number | number[]): MerkleProofNode<T> {
         if (this.empty()) {
             return new MerkleProofPruned(this.signature());
         }
@@ -194,7 +169,7 @@ export class MerkleTree {
 
         index = index.sort((a, b) => a - b);
         
-        const go = (node: MerkleNode, ixs: number[], offsetIx: number): MerkleProofNode => {
+        const go = (node: MerkleNode<T>, ixs: number[], offsetIx: number): MerkleProofNode<T> => {
             if (ixs.length === 0 || ixs[0] >= offsetIx + node.sig.size || ixs[ixs.length - 1] < offsetIx) {
                 return new MerkleProofPruned(node.sig);
             }
@@ -216,7 +191,7 @@ export class MerkleTree {
     }
 }
 
-const listToMerkleNode = (list: any[]): MerkleNode | undefined => {
+function listToMerkleNode<T>(list: T[]): MerkleNode<T> | undefined {
     if (list.length === 0) {
         return undefined;
     }
@@ -229,6 +204,24 @@ const listToMerkleNode = (list: any[]): MerkleNode | undefined => {
     return new MerkleBranch(left!, right!);
 }
 
-export const listToMerkleTree = (list: any[]): MerkleTree => {
+export function listToMerkleTree<T>(list: T[]): MerkleTree<T> {
     return new MerkleTree(listToMerkleNode(list));
 }
+
+
+// Block header
+
+export class PrivateHeader {
+    merkleRoot: MerkleSig;
+    prevHash: Hash;
+
+    constructor(merkleRoot: MerkleSig, prevHash: Hash) {
+        this.merkleRoot = merkleRoot;
+        this.prevHash = prevHash;
+    }
+
+    encodeCBOR(encoder: CBOR.Encoder): boolean {
+        return encoder.pushAny([0, this.prevHash, this.merkleRoot]);
+    }
+}
+
