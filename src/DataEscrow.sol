@@ -8,31 +8,36 @@ contract DataEscrow is Ownable {
     using Address for address payable;
 
     struct DataPart {
-        bytes32 id;
+        uint16 index;
         uint256 price;
     }
 
     enum PartBuyerState { Offered, Considered, Accepted, Rejected }
 
-    event PartAdded(bytes32 indexed dataPartID, uint256 price);
-    event Deposited(address indexed payee, uint256 weiAmount, bytes32 dataPartID);
-    event Released(address indexed payee, uint256 weiAmount, bytes32 dataPartID);
-    event Withdrawn(address indexed payee, uint256 weiAmount, bytes32 dataPartID);
-    event PartBuyerStateChanged(address indexed payee, bytes32 dataPartID, PartBuyerState state);
+    event Deposited(address indexed payee, uint256 weiAmount, uint16 dataPartID);
+    event Released(address indexed payee, uint256 weiAmount, uint16 dataPartID);
+    event Withdrawn(address indexed payee, uint256 weiAmount, uint16 dataPartID);
+    event PartBuyerStateChanged(address indexed payee, uint16 dataPartID, PartBuyerState state);
 
     address payable private immutable _beneficiary;
-    bytes32[] private _dataPartIDs;
+    bytes32 private _blockHash;
+    uint16[] private _dataPartIDs;
 
-    mapping(bytes32 => uint256) private _dataPartPrices;
-    mapping(address => mapping(bytes32 => uint256)) private _depositParts;
-    mapping(address => mapping(bytes32 => PartBuyerState)) private _partBuyerStates;
+    mapping(uint16 => uint256) private _dataPartPrices;
+    mapping(address => mapping(uint16 => uint256)) private _depositParts;
+    mapping(address => mapping(uint16 => PartBuyerState)) private _partBuyerStates;
 
-    constructor(address payable beneficiary_, DataPart[] memory dataParts_) {
+    constructor(address payable beneficiary_, bytes32 blockhash_, DataPart[] memory dataParts_) {
         for (uint256 i = 0; i < dataParts_.length; i++) {
-            _dataPartIDs.push(dataParts_[i].id);
-            _dataPartPrices[dataParts_[i].id] = dataParts_[i].price;
+            _dataPartIDs.push(dataParts_[i].index);
+            _dataPartPrices[dataParts_[i].index] = dataParts_[i].price;
         }
+        _blockHash = blockhash_;
         _beneficiary = beneficiary_;
+    }
+
+    function blockHash() public view returns (bytes32) {
+        return _blockHash;
     }
 
     function dataPartIDs() public view returns (DataPart[] memory) {
@@ -52,7 +57,7 @@ contract DataEscrow is Ownable {
         return _fullDeposit;
     }
 
-    function depositOf(address payee, bytes32 dataPartID) public view returns (uint256) {
+    function depositOf(address payee, uint16 dataPartID) public view returns (uint256) {
         return _depositParts[payee][dataPartID];
     }
 
@@ -65,23 +70,11 @@ contract DataEscrow is Ownable {
     }
 
     /**
-     * @dev Add a new data part to the escrow.
-     * @param dataPart The ID and price of the data part.
-     *
-     * Emits a {PartAdded} event.
-     */
-    function addPart(DataPart memory dataPart) public virtual onlyOwner {
-        _dataPartIDs.push(dataPart.id);
-        _dataPartPrices[dataPart.id] = dataPart.price;
-        emit PartAdded(dataPart.id, dataPart.price);
-    }
-
-    /**
      * @dev Returns whether an address can buy a part (only if all previous parts are accepted)
      * @param payee The address of the buyer.
      * @param dataPartID The ID of the data part.
      */
-    function canBuyPart(address payee, bytes32 dataPartID) public view returns (bool) {
+    function canBuyPart(address payee, uint16 dataPartID) public view returns (bool) {
         bool allPreviousAccepted = true;
         for (uint256 i = 0; i < _dataPartIDs.length; i++) {
             if (_dataPartIDs[i] == dataPartID) {
@@ -101,7 +94,7 @@ contract DataEscrow is Ownable {
      *
      * Emits a {Deposited} event.
      */
-    function deposit(address payee, bytes32 dataPartID) public payable {
+    function deposit(address payee, uint16 dataPartID) public payable {
         require(canBuyPart(payee, dataPartID), "DataEscrow: cannot buy part");
 
         uint256 amount = msg.value;
@@ -122,7 +115,7 @@ contract DataEscrow is Ownable {
      * 
      * Emits a {Released} event.
      */
-    function release(address payable payee, bytes32 dataPartID) public virtual onlyOwner {
+    function release(address payable payee, uint16 dataPartID) public virtual onlyOwner {
         require(_partBuyerStates[payee][dataPartID] == PartBuyerState.Considered, "DataEscrow: part not considered");
         require(_depositParts[payee][dataPartID] >= _dataPartPrices[dataPartID], "DataEscrow: insufficient deposit");
 
@@ -152,7 +145,7 @@ contract DataEscrow is Ownable {
      *
      * Emits a {Withdrawn} event.
      */
-    function withdraw(address payable payee, bytes32 dataPartID) public {
+    function withdraw(address payable payee, uint16 dataPartID) public {
         uint256 payment = _depositParts[payee][dataPartID];
 
         _depositParts[payee][dataPartID] = 0;

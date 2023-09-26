@@ -1,4 +1,4 @@
-import * as CBOR from 'cbor';
+import * as CBOR from 'cbor-web';
 import {
     listToMerkleTree, verifyProof,
     MerkleSig, MerkleTree, MerkleNode, MerkleLeaf, MerkleBranch,

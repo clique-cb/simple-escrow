@@ -1,6 +1,7 @@
 import keccak256 from "keccak256";
-import * as CBOR from "cbor";
+import * as CBOR from "cbor-web";
 import * as bs from "binary-searching";
+import { Buffer } from "buffer";
 
 export type Hash = Buffer;
 
@@ -17,7 +18,7 @@ export const hashRaw = (cbor: Buffer): Hash => {
 
 export const hashSerializable = (obj: any): Hash => {
     const data = CBOR.encode(obj);
-    return keccak256(data);
+    return keccak256(Buffer.from(data));
 }
 
 const word32LE = (n: number): Uint8Array => {
@@ -225,3 +226,8 @@ export class PrivateHeader {
     }
 }
 
+
+// Reexport for CBOR encoding
+export function serialize(obj: any): Buffer {
+    return CBOR.encode(obj);
+}

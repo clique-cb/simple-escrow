@@ -1,0 +1,1 @@
+export const WEBSITE_URL = process.env.REACT_URL || `http://localhost:${process.env.PORT || 3000}`

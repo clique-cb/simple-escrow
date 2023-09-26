@@ -16,13 +16,13 @@ contract CounterTest is Test {
         uint16[5] memory dataPrices = [1000, 1000, 1000, 1000, 0];
 
         DataEscrow.DataPart[] memory dataParts = new DataEscrow.DataPart[](dataPieces.length);
-        for (uint256 i = 0; i < dataPieces.length; i++) {
-            dataParts[i] = DataEscrow.DataPart(keccak256(abi.encodePacked(dataPieces[i])), dataPrices[i]);
+        for (uint16 i = 0; i < dataPieces.length; i++) {
+            dataParts[i] = DataEscrow.DataPart(i, dataPrices[i]);
         }
 
         beneficiary = vm.createWallet(uint256(keccak256(bytes("beneficiary"))));
         buyer = vm.createWallet("buyer");
-        escrow = new DataEscrow(payable(beneficiary.addr), dataParts);
+        escrow = new DataEscrow(payable(beneficiary.addr), keccak256("asdsf"), dataParts);
     }
 
     // function testView() public {

@@ -1,4 +1,8 @@
 .direnv
 .vscode
+.yarn
+.yarnrc
+yarn-error.log
 cache
 out
+.env
