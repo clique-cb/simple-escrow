@@ -1,12 +1,22 @@
 import { NextFunction, Request, Response, Router } from "express";
 import Moralis from "moralis";
 import * as jwt from "jsonwebtoken";
+import { createPublicClient, decodeEventLog, http } from 'viem'
+import { sepolia } from 'viem/chains'
 
 import * as merkle from "@clique/merkle";
 
 import { User, Block } from "./db";
 import { RequestWithUser } from "./types";
 import { WEBSITE_URL } from "./config";
+
+import Escrow from "./contracts/DataEscrow.json";
+
+const publicClient = createPublicClient({ 
+  chain: sepolia,
+  transport: http()
+});
+
 
 const authConfig = {
     domain: process.env.APP_DOMAIN || "clique.finance",
@@ -53,7 +63,7 @@ routes.post('/verify', async (req, res) => {
 
         // set JWT cookie
         res.cookie('jwt', token, {
-            httpOnly: true,
+            httpOnly: false,
         });
 
         res.status(200).json(user);
@@ -122,12 +132,12 @@ routes.get('/get-data', isAuthorized, async (req, res) => {
 
         const user = (req as RequestWithUser).user;
         
-        const blockObj = await Block.findOne({ hash: block });
+        const blockObj = await Block.findOne({ hash: block.slice(2) });
         if (!blockObj) return res.sendStatus(404);
 
         const index = Number(ix);
         const hasPurchased = user.purchases.find(p => p.block === block && p.index === index);
-        if (!hasPurchased && blockObj.author !== user.address) return res.sendStatus(403);
+        if (!hasPurchased) return res.sendStatus(403);
 
         const part = blockObj.dataParts[index];
         if (!part) return res.sendStatus(404);
@@ -162,5 +172,59 @@ routes.post('/post-block', isAuthorized, async (req, res) => {
         return res.sendStatus(200);
     } catch {
         return res.sendStatus(500);
+    }
+});
+
+routes.put('/start-sales', isAuthorized, async (req, res) => {
+    try {
+        const user = (req as RequestWithUser).user;
+        const { block, contractAddress } = req.body;
+
+        const blockObj = await Block.findOne({ hash: block, author: user.address });
+        if (!blockObj) return res.sendStatus(404);
+
+        blockObj.salesContract = contractAddress;
+        blockObj.save();
+    } catch (err) {
+        console.log(err);
+        return res.sendStatus(500);
+    }
+});
+
+routes.put('/claim-purchase', isAuthorized, async (req, res) => {
+    try {
+        const user = (req as RequestWithUser).user;
+        const { block, ix, txId } = req.body;
+
+        const blockObj = await Block.findOne({ hash: block.slice(2) });
+        if (!blockObj) return res.sendStatus(404);
+
+        const index = Number(ix);
+        const hasPurchased = user.purchases.find(p => p.block === block && p.index === index);
+        if (hasPurchased) return res.status(200);
+
+        const tx = await publicClient.getTransactionReceipt({ hash: txId });
+        if (!tx) return res.sendStatus(403);
+
+        const events = tx.logs.map(log => decodeEventLog({ abi: Escrow.abi, ...log }))
+        const event = events.find(e => {
+            const args = e.args as any;
+            return e.eventName === 'PartBuyerStateChanged' &&
+                e.eventName === 'PartBuyerStateChanged' &&
+                args.payee === user.address &&
+                args.dataPartID === index &&
+                args.state > 0;
+        });
+
+        if (!event) return res.sendStatus(403);
+        console.log(event);
+
+        user.purchases.push({ block, index });
+        user.save();
+
+        return res.sendStatus(200);
+    } catch (err) {
+        console.log(err);
+        return res.sendStatus(403);
     }
 });

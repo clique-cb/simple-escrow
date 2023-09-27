@@ -14,6 +14,14 @@ contract DataEscrow is Ownable {
 
     enum PartBuyerState { Offered, Considered, Accepted, Rejected }
 
+    struct DataPartBuyerState {
+        uint16 index;
+        uint256 price;
+        uint256 deposit;
+        PartBuyerState state;
+        bool canBuy;
+    }
+
     event Deposited(address indexed payee, uint256 weiAmount, uint16 dataPartID);
     event Released(address indexed payee, uint256 weiAmount, uint16 dataPartID);
     event Withdrawn(address indexed payee, uint256 weiAmount, uint16 dataPartID);
@@ -40,7 +48,7 @@ contract DataEscrow is Ownable {
         return _blockHash;
     }
 
-    function dataPartIDs() public view returns (DataPart[] memory) {
+    function dataParts() public view returns (DataPart[] memory) {
         DataPart[] memory _dataParts = new DataPart[](_dataPartIDs.length);
         for (uint256 i = 0; i < _dataPartIDs.length; i++) {
             _dataParts[i] = DataPart(_dataPartIDs[i], _dataPartPrices[_dataPartIDs[i]]);
@@ -61,26 +69,36 @@ contract DataEscrow is Ownable {
         return _depositParts[payee][dataPartID];
     }
 
-    function depositsOf(address payee) public view returns (DataPart[] memory) {
-        DataPart[] memory _dataParts = new DataPart[](_dataPartIDs.length);
+    function saleState() public view returns (DataPartBuyerState[] memory) {
+        DataPartBuyerState[] memory _dataParts = new DataPartBuyerState[](_dataPartIDs.length);
+        bool canBuy = true;
         for (uint256 i = 0; i < _dataPartIDs.length; i++) {
-            _dataParts[i] = DataPart(_dataPartIDs[i], _depositParts[payee][_dataPartIDs[i]]);
+            PartBuyerState _state = _partBuyerStates[msg.sender][_dataPartIDs[i]];
+            _dataParts[i] = DataPartBuyerState(
+                _dataPartIDs[i],
+                _dataPartPrices[_dataPartIDs[i]],
+                _depositParts[msg.sender][_dataPartIDs[i]],
+                _state,
+                canBuy
+            );
+            if (_state != PartBuyerState.Accepted) {
+                canBuy = false;
+            }
         }
         return _dataParts;
     }
 
     /**
      * @dev Returns whether an address can buy a part (only if all previous parts are accepted)
-     * @param payee The address of the buyer.
      * @param dataPartID The ID of the data part.
      */
-    function canBuyPart(address payee, uint16 dataPartID) public view returns (bool) {
+    function canBuyPart(uint16 dataPartID) public view returns (bool) {
         bool allPreviousAccepted = true;
         for (uint256 i = 0; i < _dataPartIDs.length; i++) {
             if (_dataPartIDs[i] == dataPartID) {
                 break;
             }
-            if (_partBuyerStates[payee][_dataPartIDs[i]] != PartBuyerState.Accepted) {
+            if (_partBuyerStates[msg.sender][_dataPartIDs[i]] != PartBuyerState.Accepted) {
                 allPreviousAccepted = false;
                 break;
             }
@@ -90,47 +108,45 @@ contract DataEscrow is Ownable {
 
     /**
      * @dev Stores the amount of money sent by `msg.sender` in the escrow, if sender can buy the part.
-     * @param payee The destination address of the funds.
      *
      * Emits a {Deposited} event.
      */
-    function deposit(address payee, uint16 dataPartID) public payable {
-        require(canBuyPart(payee, dataPartID), "DataEscrow: cannot buy part");
+    function deposit(uint16 dataPartID) public payable {
+        require(canBuyPart(dataPartID), "DataEscrow: cannot buy part");
 
         uint256 amount = msg.value;
-        _depositParts[payee][dataPartID] += amount;
-        emit Deposited(payee, amount, dataPartID);
+        _depositParts[msg.sender][dataPartID] += amount;
+        emit Deposited(msg.sender, amount, dataPartID);
 
-        if (_depositParts[payee][dataPartID] >= _dataPartPrices[dataPartID]) {
-            _partBuyerStates[payee][dataPartID] = PartBuyerState.Considered;
-            emit PartBuyerStateChanged(payee, dataPartID, PartBuyerState.Considered);
+        if (_depositParts[msg.sender][dataPartID] >= _dataPartPrices[dataPartID]) {
+            _partBuyerStates[msg.sender][dataPartID] = PartBuyerState.Considered;
+            emit PartBuyerStateChanged(msg.sender, dataPartID, PartBuyerState.Considered);
         }
     }
 
     /**
      * @dev Release funds for the paid part which has been considered and accept the data. The part price is
      * transferred to beneficiary, the remainder is transferred to the buyer.
-     * @param payee The address of the buyer.
      * @param dataPartID The ID of the data part.
      * 
      * Emits a {Released} event.
      */
-    function release(address payable payee, uint16 dataPartID) public virtual onlyOwner {
-        require(_partBuyerStates[payee][dataPartID] == PartBuyerState.Considered, "DataEscrow: part not considered");
-        require(_depositParts[payee][dataPartID] >= _dataPartPrices[dataPartID], "DataEscrow: insufficient deposit");
+    function release(uint16 dataPartID) public virtual {
+        require(_partBuyerStates[msg.sender][dataPartID] == PartBuyerState.Considered, "DataEscrow: part not considered");
+        require(_depositParts[msg.sender][dataPartID] >= _dataPartPrices[dataPartID], "DataEscrow: insufficient deposit");
 
         uint256 payment = _dataPartPrices[dataPartID];
-        uint256 remaining = _depositParts[payee][dataPartID] - payment;
+        uint256 remaining = _depositParts[msg.sender][dataPartID] - payment;
 
-        _depositParts[payee][dataPartID] = 0;
-        _partBuyerStates[payee][dataPartID] = PartBuyerState.Accepted;
+        _depositParts[msg.sender][dataPartID] = 0;
+        _partBuyerStates[msg.sender][dataPartID] = PartBuyerState.Accepted;
 
         _beneficiary.sendValue(payment);
         if (remaining > 0) {
-            payee.sendValue(remaining);
+            payable(msg.sender).sendValue(remaining);
         }
-        emit Released(payee, payment, dataPartID);
-        emit PartBuyerStateChanged(payee, dataPartID, PartBuyerState.Accepted);
+        emit Released(msg.sender, payment, dataPartID);
+        emit PartBuyerStateChanged(msg.sender, dataPartID, PartBuyerState.Accepted);
     }
 
     /**
@@ -141,18 +157,17 @@ contract DataEscrow is Ownable {
      * Make sure you trust the recipient, or are either following the
      * checks-effects-interactions pattern or using {ReentrancyGuard}.
      *
-     * @param payee The address whose funds will be withdrawn and transferred to.
      *
      * Emits a {Withdrawn} event.
      */
-    function withdraw(address payable payee, uint16 dataPartID) public {
-        uint256 payment = _depositParts[payee][dataPartID];
+    function withdraw(uint16 dataPartID) public {
+        uint256 payment = _depositParts[msg.sender][dataPartID];
 
-        _depositParts[payee][dataPartID] = 0;
-        _partBuyerStates[payee][dataPartID] = PartBuyerState.Rejected;
+        _depositParts[msg.sender][dataPartID] = 0;
+        _partBuyerStates[msg.sender][dataPartID] = PartBuyerState.Rejected;
 
-        payee.sendValue(payment);
-        emit Withdrawn(payee, payment, dataPartID);
-        emit PartBuyerStateChanged(payee, dataPartID, PartBuyerState.Rejected);
+        payable(msg.sender).sendValue(payment);
+        emit Withdrawn(msg.sender, payment, dataPartID);
+        emit PartBuyerStateChanged(msg.sender, dataPartID, PartBuyerState.Rejected);
     }
 }

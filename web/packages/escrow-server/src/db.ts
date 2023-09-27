@@ -1,4 +1,4 @@
-import { connect, InferSchemaType, model, Schema } from "mongoose";
+import { connect, HydratedDocument, InferSchemaType, model, Schema } from "mongoose";
 
 export async function connectDb() {
     try {
@@ -20,7 +20,15 @@ const dataPartSchema = new Schema({
     },
 })
 
-const userSchema = new Schema({
+interface IUser {
+    address: string;
+    purchases: {
+        block: string;
+        index: number;
+    }[];
+};
+
+const userSchema = new Schema<IUser>({
     address: {
         type: String,
         required: true,
@@ -29,13 +37,17 @@ const userSchema = new Schema({
     purchases: [dataPartSchema],
 });
 
-export type UserType = InferSchemaType<typeof userSchema>;
-export const User = model("User", userSchema);
+export type UserType = HydratedDocument<IUser>;
+export const User = model<IUser>("User", userSchema);
 
 export const blockSchema = new Schema({
     hash: String,
     txId: String,
     author: String,
+    salesContract: {
+        type: String,
+        required: false,
+    },
     dataParts: [Object],
 });
 

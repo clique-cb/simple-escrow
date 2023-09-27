@@ -1,42 +1,17 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { sepolia, useAccount, useConnect, useContractRead, usePrepareContractWrite, useWalletClient } from 'wagmi';
+import { Link, useNavigate } from 'react-router-dom';
+import { WalletClient, sepolia, useAccount, useConnect, useContractRead, usePrepareContractWrite, useWalletClient } from 'wagmi';
 import { Buffer } from 'buffer';
 
 import * as merkle from "@clique/merkle";
 import axios from 'axios';
 import { disciplina } from '../contract/disciplina';
-import * as EscrowContract from '../contract/data_escrow.json';
+import { abi as escrowABI, bytecode as escrowBytecode } from '../contract/escrow';
 
 import { InjectedConnector } from 'wagmi/connectors/injected';
 import { getContract, waitForTransaction } from 'wagmi/actions';
-import { keccak256 } from 'viem';
-import * as CBOR from 'cbor-web';
 
-
-const addrHashCBOR = (addr: string) => {
-    const buf = Buffer.from(addr.slice(2), "hex");
-    const packed = CBOR.encode(buf);
-    return keccak256(packed);
-}
-
-const reconstructProof = (proof: any): merkle.MerkleProofNode<any> => {
-    if ('left' in proof) {
-        return new merkle.MerkleProofBranch(
-            reconstructProof(proof.left),
-            reconstructProof(proof.right)
-        );
-    } else if ('sig' in proof) {
-        return new merkle.MerkleProofPruned(
-            new merkle.MerkleSig(
-                proof.sig.size,
-                Buffer.from(proof.sig.hash.data)
-            )
-        );
-    } else {
-        return new merkle.MerkleProofLeaf(proof.value);
-    }
-}
+import { addrHashCBOR, reconstructProof } from './common';
 
 export default function PostBlock() {
     const navigate = useNavigate();
@@ -62,6 +37,34 @@ export default function PostBlock() {
         }
     }
 
+    const startSales = async (client: WalletClient, rootHash: string, parts: any[]) => {
+        console.log('Posting the sales contract!')
+
+        const addr = client.account.address;
+        // @ts-ignore
+        const deployTxId = await client.deployContract({
+            abi: escrowABI,
+            bytecode: `0x${escrowBytecode}`,
+            account: addr,
+            args: [addr, `0x${rootHash}`, parts.map((_, index) => ({ index, price: 1000 }))],
+            chain: sepolia,
+        });
+
+        console.log(deployTxId);
+
+        const { contractAddress } = await waitForTransaction({
+            hash: deployTxId,
+        });
+        console.log(contractAddress);
+
+        await axios.put(`${process.env.REACT_APP_SERVER_URL}/start-sales`, {
+            block: rootHash,
+            contractAddress,
+        }, { withCredentials: true})
+
+        return updateBlocks();
+    }
+
     const getProof = async (blockHash: string, ix: number) => {
         const { data } = await axios.get(`${process.env.REACT_APP_SERVER_URL}/get-data`, {
             params: {
@@ -84,17 +87,18 @@ export default function PostBlock() {
                 throw new Error('Wallet client not connected');
             }
 
-            walletClient.chain = sepolia;
-            console.log(walletClient);
+            const client = walletClient as WalletClient;
+            client.chain = sepolia;
+            console.log(client);
 
             const dscpContract = getContract({
                 address: disciplina.address,
                 abi: disciplina.abi,
-                walletClient,
+                walletClient: client,
                 chainId: sepolia.id,
             });
 
-            const addr = walletClient.account.address;
+            const addr = client.account.address;
             let prevHash = addrHashCBOR(addr);
             const prevHashCur = await dscpContract.read.prevHashCur([addr]) as string;
             if (prevHashCur !== "0x0000000000000000000000000000000000000000000000000000000000000000") {
@@ -124,12 +128,11 @@ export default function PostBlock() {
             const merkleRootHash = `0x${sig.hash.toString('hex')}`;
 
             console.log(header);
-            const res = await dscpContract.simulate.submitHeader([
+            const { request } = await dscpContract.simulate.submitHeader([
                 prevHash,
                 merkleRootHash,
                 sig.size
             ], { account: addr });
-            console.log(res);
 
             const txId = await dscpContract.write.submitHeader([
                 prevHash,
@@ -141,22 +144,6 @@ export default function PostBlock() {
             const data = await waitForTransaction({
                 hash: txId,
             })
-            console.log(data);
-
-            console.log('Posting the sales contract!')
-
-            const deployTxId = await walletClient.deployContract({
-                abi: EscrowContract.abi,
-                bytecode: `0x${EscrowContract.bytecode.object.slice(2)}`,
-                account: addr,
-                args: [addr, merkleRootHash, list.map((_, index) => ({ index, price: 1000}))]
-            })
-
-            console.log(deployTxId);
-
-            const data2 = await waitForTransaction({
-                hash: deployTxId,
-            });
             console.log(data);
 
             const postRes = await axios.post(`${process.env.REACT_APP_SERVER_URL}/post-block`, {
@@ -194,10 +181,17 @@ export default function PostBlock() {
             <h3>My Blocks</h3>
             <ul>
                 {blocks.map((block: any, i) => (
-                    <li key={block.id}>
+                    <li key={block.hash}>
                         <span onClick={() => getProof(block.hash, 0)}>{block.hash.slice(0, 8)}</span>
                         (<a href={`https://sepolia.etherscan.io/tx/${block.txId}`} target='blank'>tx</a>):
                         {JSON.stringify(block.dataParts)}
+                        {block.salesContract ? (
+                            <Link to={`/sale/${block.salesContract}`}>sales</Link>
+                        ) : (
+                            <button type="button" onClick={() => startSales(walletClient as WalletClient, block.hash, block.dataParts)}>
+                                Start Sales
+                            </button>
+                        )}
                     </li>
                 ))}
             </ul>

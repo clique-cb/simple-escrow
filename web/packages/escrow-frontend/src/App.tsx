@@ -6,11 +6,11 @@ import { publicClient, webSocketPublicClient, wagmiConfig } from './config';
 
 import Signin from './components/signin';
 import User from './components/user';
+import PostBlock from './components/postBlock';
+import Sale from './components/sale';
 
 import logo from './logo.svg';
 import './App.css';
-import PostBlock from './components/postBlock';
-
 
 const router = createBrowserRouter([
   {
@@ -29,11 +29,21 @@ const router = createBrowserRouter([
     path: "/",
     element: <Home />,
   },
+  {
+    path: "/sale/:contractAddr",
+    element: <Sale />
+  }
 ]);
 
 function App() {
   return (
     <WagmiConfig config={wagmiConfig}>
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+        integrity="sha384-9ndCyUaIbzAi2FUVXJi0CjmCapSmO7SnpJef0486qhLnuZ2cdeRhO02iuK6FUUVM"
+        crossOrigin="anonymous"
+      />
       <div className="App">
         <RouterProvider router={router} />
       </div>
