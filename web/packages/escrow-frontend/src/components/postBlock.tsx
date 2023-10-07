@@ -13,6 +13,18 @@ import { getContract, waitForTransaction } from 'wagmi/actions';
 
 import { addrHashCBOR, reconstructProof } from './common';
 
+import TEST from "./test.json";
+import { Path, Coords, encodeMap } from '../lib';
+
+const MY_IMG: string = TEST.imagePart;
+const MY_PATH: Path = TEST.pathPart;
+const MY_ORIGIN: Coords = TEST.origin;
+
+const encodedMap = encodeMap(MY_IMG, MY_PATH, MY_ORIGIN);
+
+console.log(encodedMap);
+
+
 export default function PostBlock() {
     const navigate = useNavigate();
     const { connectAsync } = useConnect();
@@ -41,12 +53,15 @@ export default function PostBlock() {
         console.log('Posting the sales contract!')
 
         const addr = client.account.address;
+        const prices = parts.map((_, index) => ({ index, price: BigInt("100000000000000") }));
+        prices[prices.length - 1].price = BigInt(0);
+
         // @ts-ignore
         const deployTxId = await client.deployContract({
             abi: escrowABI,
             bytecode: `0x${escrowBytecode}`,
             account: addr,
-            args: [addr, `0x${rootHash}`, parts.map((_, index) => ({ index, price: 1000 }))],
+            args: [addr, `0x${rootHash}`, prices],
             chain: sepolia,
         });
 
@@ -117,7 +132,9 @@ export default function PostBlock() {
 
             console.log(prevHash);
 
-            const list = JSON.parse(text);
+            // const list = JSON.parse(text);
+            const list = encodedMap.map((x) => JSON.stringify(x));
+
             if (!Array.isArray(list)) {
                 throw new Error('Invalid list');
             }
@@ -154,7 +171,6 @@ export default function PostBlock() {
             console.log(postRes);
             updateBlocks();
 
-
         } catch (err) {
             console.log(err);
         }
@@ -184,7 +200,7 @@ export default function PostBlock() {
                     <li key={block.hash}>
                         <span onClick={() => getProof(block.hash, 0)}>{block.hash.slice(0, 8)}</span>
                         (<a href={`https://sepolia.etherscan.io/tx/${block.txId}`} target='blank'>tx</a>):
-                        {JSON.stringify(block.dataParts)}
+                        {block.dataParts.length} parts
                         {block.salesContract ? (
                             <Link to={`/sale/${block.salesContract}`}>sales</Link>
                         ) : (

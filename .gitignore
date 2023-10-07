@@ -6,3 +6,5 @@ yarn-error.log
 cache
 out
 .env
+**.png
+**.txt

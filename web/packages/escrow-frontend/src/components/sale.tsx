@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { ReactElement, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, Navigate } from "react-router-dom";
 import { sepolia, useAccount, useConnect, useSignMessage, useWalletClient } from "wagmi";
 import { getContract, waitForTransaction } from 'wagmi/actions';
 import axios from 'axios';
 
 import { abi } from "../contract/escrow";
-import { Button, Container, Table } from "react-bootstrap";
-import { InjectedConnector } from "wagmi/connectors/injected";
+import { Button, Container, Row, Table } from "react-bootstrap";
 import { MerkleProofNode, restoreRoot } from "@clique/merkle";
-import { decodeEventLog } from "viem";
 
+import { Coords, Path, decodeMap } from "../lib";
 import { getValues, reconstructProof, signIn } from "./common";
+import { formatEther } from "viem";
 
 enum PartState { Offered, Considered, Accepted, Rejected };
 
@@ -24,13 +24,147 @@ type DataPart = {
     proof?: MerkleProofNode<any>;
 }
 
-
 const isValidRoot = (proof: MerkleProofNode<any>, root: string) => {
     const proofRoot = restoreRoot(proof);
     const hexHash = `0x${proofRoot.hash.toString('hex')}`;
     return hexHash === root;
 }
 
+function CombinedResults({ parts }: { parts: DataPart[] }) {
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+    const getClientOffset = useCallback((canvas: HTMLCanvasElement, event: MouseEvent): Coords => {
+        const { clientX, clientY } = event;
+        const rect = canvas.getBoundingClientRect()
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+
+        return {
+           x,
+           y
+        } 
+    }, [])
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        const boughtParts = parts.filter(({ proof }) => !!proof);
+        
+        if (canvas && boughtParts.length > 0) {
+            const boughtValues = boughtParts.map(({ proof }) => getValues(proof!)[0]);
+            const encodedMap = boughtValues.map(v => JSON.parse(v));
+
+            const ctx = canvas.getContext('2d')!;
+            const { image, paths, origin } = decodeMap(encodedMap);
+            console.log(image);
+            console.log(paths);
+            console.log(origin);
+
+            const curPath = paths[0];
+
+            const drawPath = (path: Path) => {
+                if (!curPath) return;
+                ctx.beginPath()
+                ctx.lineWidth = 3;
+                ctx.lineCap = "round";
+                ctx.strokeStyle = "red";
+
+                let start = path[0]
+                ctx.moveTo(start.x, start.y);
+
+                for (const pt of path.slice(1)) {
+                    ctx.lineTo(pt.x, pt.y);
+                }
+
+                ctx.stroke()
+            }
+
+            const imageObj = new Image();
+
+            const drawImage = () => {
+                let width = imageObj.width;
+                let height = imageObj.height;
+
+                if (width > 1000) {
+                    // Maintain the aspect ratio of the image
+                    const scaleFactor = 1000 / width;
+                    width = 1000;
+                    height = height * scaleFactor;
+                }
+
+                // Resize the canvas to match the image size
+                canvas.width = width;
+                canvas.height = height;
+
+                ctx.imageSmoothingEnabled = false;
+                ctx.drawImage(imageObj, 0, 0, width, height);
+            }
+
+            const draw = () => {
+                drawImage();
+                drawPath(curPath);
+            }
+
+            imageObj.onload = draw;
+            if (image) {
+                imageObj.src = image;
+            }
+    
+            // let curLineStart: Coords | null = null;
+            // const lineCoords: Coords[] = []
+
+            // canvas.addEventListener('mousedown', (event) => {
+            //     console.log(event);
+            //     const mousePos = getClientOffset(canvas, event);
+
+            //     if (curLineStart !== null) {
+            //         ctx.lineWidth = 3;
+            //         ctx.lineCap = "round";
+            //         ctx.strokeStyle = "red";
+
+            //         ctx.moveTo(curLineStart.x, curLineStart.y);
+            //         ctx.lineTo(mousePos.x, mousePos.y);
+            //         ctx.stroke()
+            //     } else {
+            //         ctx.beginPath()
+            //     }
+
+            //     curLineStart = mousePos;
+            //     lineCoords.push(curLineStart);
+            //     console.log(lineCoords);
+            // })
+        }
+    }, [canvasRef, parts])
+
+    return (
+        <>
+            <Row>
+                <h4>combined data result</h4>
+            </Row>
+            <Row className="justify-content-center">
+                <canvas ref={canvasRef} style={{"width": "auto", "height": "auto"}} />
+                {/* <p>{boughtParts.map(({ proof }) => getValues(proof!)[0]).join(' ')}</p> */}
+            </Row>
+        </>
+    )
+}
+
+function displayPart(part: string): ReactElement {
+    const obj = JSON.parse(part);
+    if (obj.type !== 'map') {
+        throw new Error('Invalid part');
+    }
+    
+    const data = JSON.parse(obj.data);
+    if (data.partType === 'image') {
+        return <img src={data.data} alt="part" width={150} />;
+    } else if (data.partType === 'coords') {
+        const { x, y } = data.data;
+        const coords = `${x},${y}`;
+        return <a href={`https://www.google.com/maps/place/${coords}`} target='blank'>{coords}</a>;
+    }
+
+    return <p>{data.partType}: {JSON.stringify(data.data)}</p>;
+}
 
 export default function Sale() {
     const { contractAddr } = useParams();
@@ -63,21 +197,23 @@ export default function Sale() {
         const hash = await escrowContract.read.blockHash([], {}) as string;
         console.log(hash);
         setBlockHash(hash);
+        return hash;
     }, [getEscrowContract]);
 
-    const getParts = useCallback(async () => {
+    const getParts = useCallback(async (blkHash: string) => {
         const escrowContract = getEscrowContract();
         const addr = walletClient!.account.address;
         const fullParts = await escrowContract.read.saleState([], { account: addr }) as DataPart[];
 
         try {
             const { data } = await axios(`${process.env.REACT_APP_SERVER_URL}/user`, { withCredentials: true });
-            const purchasedIxs = data.purchases.filter((p: any) => p.block === blockHash).map((p: any) => p.index);
+            console.log(data, blkHash);
+            const purchasedIxs = data.purchases.filter((p: any) => p.block === blkHash).map((p: any) => p.index);
             for (const p of fullParts) {
                 const isPurchased = purchasedIxs.includes(p.index);
                 if (isPurchased) {
-                    const { data } = await axios(`${process.env.REACT_APP_SERVER_URL}/get-data`, { 
-                        params: { block: blockHash, ix: p.index },
+                    const { data } = await axios(`${process.env.REACT_APP_SERVER_URL}/get-data`, {
+                        params: { block: blkHash, ix: p.index },
                         withCredentials: true
                     });
                     const { proof } = data;
@@ -90,9 +226,9 @@ export default function Sale() {
             console.error(err)
         }
 
-        console.log(fullParts);    
+        console.log(fullParts);
         setParts(fullParts);
-    }, [getEscrowContract, blockHash]);
+    }, [getEscrowContract]);
 
     const depositPart = useCallback(async (index: number) => {
         const escrowContract = getEscrowContract();
@@ -103,7 +239,7 @@ export default function Sale() {
         }
 
         const toDeposit = part.price - (part.deposit || BigInt(0));
-        if (toDeposit <= BigInt(0)) {
+        if (toDeposit < BigInt(0)) {
             throw new Error('toDeposit is less than 0');
         }
 
@@ -121,7 +257,7 @@ export default function Sale() {
             txId,
         }, { withCredentials: true });
 
-        await getParts();
+        await getParts(blockHash!);
     }, [parts, getEscrowContract]);
 
     const releasePart = useCallback(async (index: number) => {
@@ -140,7 +276,7 @@ export default function Sale() {
         const txRes = await waitForTransaction({ hash: txId });
         console.log(txRes);
 
-        await getParts();
+        await getParts(blockHash!);
 
     }, [parts, getEscrowContract])
 
@@ -152,8 +288,7 @@ export default function Sale() {
 
     useEffect(() => {
         if (isConnected && walletClient) {
-            getBlockHash();
-            getParts();
+            getBlockHash().then(getParts);
         }
     }, [contractAddr, isConnected, walletClient])
 
@@ -168,8 +303,10 @@ export default function Sale() {
     return (
         <Container fluid>
             <h1>welcome to sale</h1>
+            <p>get test ETH <a href="https://sepoliafaucet.com/">here</a></p>
             <p>merkle hash: {blockHash}</p>
             <a href={`https://sepolia.etherscan.io/address/${contractAddr}`} target='blank'>contract</a>
+            <CombinedResults parts={parts} />
             <Table>
                 <thead>
                     <tr>
@@ -186,8 +323,8 @@ export default function Sale() {
                     {parts.map(({ index, price, deposit, state, canBuy, proof }) => (
                         <tr key={index}>
                             <td>{index}</td>
-                            <td>{price.toString()}</td>
-                            <td>{deposit ? deposit.toString() : 0}</td>
+                            <td>{formatEther(price)} ETH</td>
+                            <td>{deposit ? formatEther(deposit) : 0} ETH</td>
                             <td>{canBuy ? 'yes' : 'no'}</td>
                             <td>{
                                 (() => {
@@ -208,7 +345,7 @@ export default function Sale() {
                             }
                             </td>
                             <td>{(proof && blockHash) ? (isValidRoot(proof, blockHash) ? 'valid' : 'invalid') : ''}</td>
-                            <td>{proof ? getValues(proof)[0] : ''}</td>
+                            <td>{proof ? displayPart(getValues(proof)[0]) : ''}</td>
                         </tr>
                     ))}
                 </tbody>

@@ -26,7 +26,7 @@
 
           # Decorative prompt override so we know when we're in a dev shell
           shellHook = ''
-            export PATH=$PWD/node_modules/.bin:$PATH
+            export PATH=$PWD/web/node_modules/.bin:$PATH
           '';
         };
       });
