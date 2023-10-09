@@ -112,6 +112,48 @@ export class MerkleProofBranch<T> {
     }
 }
 
+export const origSize = (proof: MerkleProofNode<any>): number => {
+    if (proof instanceof MerkleProofLeaf) {
+        return 1;
+    }
+
+    if (proof instanceof MerkleProofPruned) {
+        return proof.sig.size;
+    }
+
+    const { left, right } = proof;
+    return origSize(left) + origSize(right);
+}
+
+export const proofSubset = (proof: MerkleProofNode<any>, indices: number[] | number): MerkleProofNode<any> => {
+    if (typeof indices === "number") {
+        indices = [indices];
+    }
+
+    indices = indices.sort((a, b) => a - b);
+
+    const go = (proof: MerkleProofNode<any>, ixs: number[], offsetIx: number): MerkleProofNode<any> => {
+        if (ixs.length === 0) {
+            return new MerkleProofPruned(restoreRoot(proof));
+        }
+
+        if (proof instanceof MerkleProofLeaf || proof instanceof MerkleProofPruned) {
+            return proof;
+        }
+
+        const { left, right } = proof;
+        const leftSize = origSize(left);
+        const pivot = bs.ge(ixs, leftSize + offsetIx);
+        const leftIxs = ixs.slice(0, pivot);
+        const rightIxs = ixs.slice(pivot);
+        const leftSubset = go(left, leftIxs, offsetIx);
+        const rightSubset = go(right, rightIxs, offsetIx + leftSize);
+        return new MerkleProofBranch(leftSubset, rightSubset);
+    }
+
+    return go(proof, indices, 0);
+}
+
 export const restoreRoot = (proof: MerkleProofNode<any>): MerkleSig => {
     if (proof instanceof MerkleProofLeaf) {
         return new MerkleSig(1, hashSerializable(proof.value));
@@ -125,7 +167,6 @@ export const restoreRoot = (proof: MerkleProofNode<any>): MerkleSig => {
 
     return combineTwoSigs(leftRoot, rightRoot);
 }
-
 
 export const verifyProof = (proof: MerkleProofNode<any>, root: MerkleSig): boolean => {
     const proofRoot = restoreRoot(proof);

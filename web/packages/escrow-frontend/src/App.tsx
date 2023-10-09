@@ -1,6 +1,7 @@
 import React from 'react';
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Link, RouterProvider } from "react-router-dom";
 import { WagmiConfig } from 'wagmi';
+import { MathJaxContext } from 'better-react-mathjax';
 
 import { publicClient, webSocketPublicClient, wagmiConfig } from './config';
 
@@ -45,7 +46,9 @@ function App() {
         crossOrigin="anonymous"
       />
       <div className="App">
-        <RouterProvider router={router} />
+        <MathJaxContext>
+          <RouterProvider router={router} />
+        </MathJaxContext>
       </div>
     </WagmiConfig>
   );
@@ -55,6 +58,9 @@ function Home() {
   return (
     <header className="App-header">
       Hello
+      <div className="App-body">
+        <Link to="/sale/0x91abe78585baa43830b6310f121dcd484cbec137">proceed to sale #1</Link>
+      </div>
     </header>
   )
 }

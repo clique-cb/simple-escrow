@@ -6,11 +6,12 @@ import axios from 'axios';
 
 import { abi } from "../contract/escrow";
 import { Button, Container, Row, Table } from "react-bootstrap";
-import { MerkleProofNode, restoreRoot } from "@clique/merkle";
+import { MerkleProofNode, restoreRoot, proofSubset } from "@clique/merkle";
 
 import { Coords, Path, decodeMap } from "../lib";
 import { getValues, reconstructProof, signIn } from "./common";
 import { formatEther } from "viem";
+import { MathJax } from "better-react-mathjax";
 
 enum PartState { Offered, Considered, Accepted, Rejected };
 
@@ -30,6 +31,121 @@ const isValidRoot = (proof: MerkleProofNode<any>, root: string) => {
     return hexHash === root;
 }
 
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            resolve(img);
+        }
+        img.onabort = () => {
+            reject("Aborted");
+        }
+        img.src = src;
+    });
+}
+
+function drawImage(ctx: CanvasRenderingContext2D, img: HTMLImageElement, maxWidth: number = 1000) {
+    let width = img.width;
+    let height = img.height;
+
+    if (width > maxWidth) {
+        // Maintain the aspect ratio of the image
+        const scaleFactor = 1000 / width;
+        width = 1000;
+        height = height * scaleFactor;
+    }
+
+    // Resize the canvas to match the image size
+    ctx.canvas.width = width;
+    ctx.canvas.height = height;
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0, width, height);
+}
+
+
+const drawPath = (ctx: CanvasRenderingContext2D, path: Path, addArrow: boolean = false) => {
+    if (!path) return;
+
+    ctx.beginPath()
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "red";
+
+    let prev = path[0]
+    ctx.moveTo(prev.x, prev.y);
+
+    for (const pt of path.slice(1)) {
+        ctx.lineTo(pt.x, pt.y);
+        prev = pt;
+    }
+
+    if (addArrow && path.length > 1) {
+        const arrowSize = 10;
+        const arrowAngle = Math.PI / 6;
+        const arrowBase = arrowSize * Math.tan(arrowAngle / 2);
+
+        const last = path[path.length - 1];
+        const secondLast = path[path.length - 2];
+
+        const angle = Math.atan2(last.y - secondLast.y, last.x - secondLast.x);
+        const angle1 = angle + arrowAngle;
+        const angle2 = angle - arrowAngle;
+
+        const x1 = last.x - arrowSize * Math.cos(angle1);
+        const y1 = last.y - arrowSize * Math.sin(angle1);
+        const x2 = last.x - arrowSize * Math.cos(angle2);
+        const y2 = last.y - arrowSize * Math.sin(angle2);
+
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(x1, y1);
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(x2, y2);
+    }
+
+    ctx.stroke()
+}
+
+
+function fitPathInBBox(path: Path, maxWidth: number = 1000): Path {
+    const xs = path.map(({ x }) => x);
+    const ys = path.map(({ y }) => y);
+
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const maxX = Math.max(...xs);
+    const maxY = Math.max(...ys);
+
+    const width = maxX - minX;
+    const height = maxY - minY;
+
+    const scaleFactor = maxWidth / width;
+
+    return path.map(({ x, y }) => ({
+        x: (x - minX) * scaleFactor,
+        y: (y - minY) * scaleFactor,
+    }))
+}
+
+
+function DisplayPath({ path, maxWidth = 150 }: { path: Path; maxWidth?: number }) {
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (canvas) {
+            const ctx = canvas.getContext('2d')!;
+            drawPath(ctx, fitPathInBBox(path, maxWidth), true);
+        }
+    }, [canvasRef, path])
+
+    return (
+        <canvas ref={canvasRef} style={{ "width": maxWidth, "height": "auto" }} />
+    )
+}
+
+
 function CombinedResults({ parts }: { parts: DataPart[] }) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -40,98 +156,73 @@ function CombinedResults({ parts }: { parts: DataPart[] }) {
         const y = clientY - rect.top;
 
         return {
-           x,
-           y
-        } 
+            x,
+            y
+        }
+    }, [])
+
+    const drawCurrent = useCallback(async ({
+        ctx, image, paths, origin
+    }: {
+        ctx: CanvasRenderingContext2D;
+        image?: string;
+        paths: Path[];
+        origin?: Coords;
+    }) => {
+        const curPath = paths[0];
+
+        if (image) {
+            const imageObj = await loadImage(image);
+
+            drawImage(ctx, imageObj);
+            drawPath(ctx, curPath, true);
+            if (origin && curPath) {   
+                ctx.font = "25px sans-serif";
+                ctx.fillStyle = "blue";
+                ctx.fillText(`${origin.x},${origin.y}`, curPath[0].x, curPath[0].y);
+
+                ctx.font = "15px sans-serif";
+                ctx.fillStyle = "green";
+                ctx.fillText("прикоп 5-7 см", curPath[curPath.length - 1].x + 5, curPath[curPath.length - 1].y + 5);
+            }
+        }
+
+        // let curLineStart: Coords | null = null;
+        // const lineCoords: Coords[] = []
+
+        // canvas.addEventListener('mousedown', (event) => {
+        //     console.log(event);
+        //     const mousePos = getClientOffset(canvas, event);
+
+        //     if (curLineStart !== null) {
+        //         ctx.lineWidth = 3;
+        //         ctx.lineCap = "round";
+        //         ctx.strokeStyle = "red";
+
+        //         ctx.moveTo(curLineStart.x, curLineStart.y);
+        //         ctx.lineTo(mousePos.x, mousePos.y);
+        //         ctx.stroke()
+        //     } else {
+        //         ctx.beginPath()
+        //     }
+
+        //     curLineStart = mousePos;
+        //     lineCoords.push(curLineStart);
+        //     console.log(lineCoords);
+        // })
     }, [])
 
     useEffect(() => {
         const canvas = canvasRef.current;
         const boughtParts = parts.filter(({ proof }) => !!proof);
-        
+
         if (canvas && boughtParts.length > 0) {
             const boughtValues = boughtParts.map(({ proof }) => getValues(proof!)[0]);
             const encodedMap = boughtValues.map(v => JSON.parse(v));
 
             const ctx = canvas.getContext('2d')!;
             const { image, paths, origin } = decodeMap(encodedMap);
-            console.log(image);
-            console.log(paths);
-            console.log(origin);
-
-            const curPath = paths[0];
-
-            const drawPath = (path: Path) => {
-                if (!curPath) return;
-                ctx.beginPath()
-                ctx.lineWidth = 3;
-                ctx.lineCap = "round";
-                ctx.strokeStyle = "red";
-
-                let start = path[0]
-                ctx.moveTo(start.x, start.y);
-
-                for (const pt of path.slice(1)) {
-                    ctx.lineTo(pt.x, pt.y);
-                }
-
-                ctx.stroke()
-            }
-
-            const imageObj = new Image();
-
-            const drawImage = () => {
-                let width = imageObj.width;
-                let height = imageObj.height;
-
-                if (width > 1000) {
-                    // Maintain the aspect ratio of the image
-                    const scaleFactor = 1000 / width;
-                    width = 1000;
-                    height = height * scaleFactor;
-                }
-
-                // Resize the canvas to match the image size
-                canvas.width = width;
-                canvas.height = height;
-
-                ctx.imageSmoothingEnabled = false;
-                ctx.drawImage(imageObj, 0, 0, width, height);
-            }
-
-            const draw = () => {
-                drawImage();
-                drawPath(curPath);
-            }
-
-            imageObj.onload = draw;
-            if (image) {
-                imageObj.src = image;
-            }
-    
-            // let curLineStart: Coords | null = null;
-            // const lineCoords: Coords[] = []
-
-            // canvas.addEventListener('mousedown', (event) => {
-            //     console.log(event);
-            //     const mousePos = getClientOffset(canvas, event);
-
-            //     if (curLineStart !== null) {
-            //         ctx.lineWidth = 3;
-            //         ctx.lineCap = "round";
-            //         ctx.strokeStyle = "red";
-
-            //         ctx.moveTo(curLineStart.x, curLineStart.y);
-            //         ctx.lineTo(mousePos.x, mousePos.y);
-            //         ctx.stroke()
-            //     } else {
-            //         ctx.beginPath()
-            //     }
-
-            //     curLineStart = mousePos;
-            //     lineCoords.push(curLineStart);
-            //     console.log(lineCoords);
-            // })
+            drawCurrent({ ctx, image, paths, origin });
         }
     }, [canvasRef, parts])
 
@@ -141,7 +232,7 @@ function CombinedResults({ parts }: { parts: DataPart[] }) {
                 <h4>combined data result</h4>
             </Row>
             <Row className="justify-content-center">
-                <canvas ref={canvasRef} style={{"width": "auto", "height": "auto"}} />
+                <canvas ref={canvasRef} style={{ "width": "auto", "height": "auto" }} />
                 {/* <p>{boughtParts.map(({ proof }) => getValues(proof!)[0]).join(' ')}</p> */}
             </Row>
         </>
@@ -153,14 +244,37 @@ function displayPart(part: string): ReactElement {
     if (obj.type !== 'map') {
         throw new Error('Invalid part');
     }
-    
+
     const data = JSON.parse(obj.data);
     if (data.partType === 'image') {
-        return <img src={data.data} alt="part" width={150} />;
+        return (
+            <>
+                <p>terrain</p>
+                <img src={data.data} alt="part" width={150} />
+            </>
+        );
     } else if (data.partType === 'coords') {
         const { x, y } = data.data;
         const coords = `${x},${y}`;
         return <a href={`https://www.google.com/maps/place/${coords}`} target='blank'>{coords}</a>;
+    } else if (data.partType === 'pathChunk') {
+        const { path, ix } = data.data;
+        return (
+            <>
+                <p>path chunk {ix}</p>
+                <DisplayPath path={path} />
+            </>
+        )
+    } else if (data.partType === 'transform') {
+        const { op, ix } = data.data;
+        const fop = op.map((row: number[]) => row.map((x: number) => x.toFixed(2)));
+
+        return (
+            <>
+                <p>transform {ix}</p>
+                <MathJax>{`\\begin{pmatrix} ${fop[0][0]} & ${fop[0][1]} \\\\ ${fop[1][0]} & ${fop[1][1]} \\end{pmatrix}`}</MathJax>
+            </>
+        )
     }
 
     return <p>{data.partType}: {JSON.stringify(data.data)}</p>;
@@ -206,21 +320,34 @@ export default function Sale() {
         const fullParts = await escrowContract.read.saleState([], { account: addr }) as DataPart[];
 
         try {
-            const { data } = await axios(`${process.env.REACT_APP_SERVER_URL}/user`, { withCredentials: true });
-            console.log(data, blkHash);
-            const purchasedIxs = data.purchases.filter((p: any) => p.block === blkHash).map((p: any) => p.index);
+            // const { data } = await axios(`${process.env.REACT_APP_SERVER_URL}/user`, { withCredentials: true });
+            // console.log(data, blkHash);
+            // const purchasedIxs = data.purchases.filter((p: any) => p.block === blkHash).map((p: any) => p.index);
+            // for (const p of fullParts) {
+            //     const isPurchased = purchasedIxs.includes(p.index);
+            //     if (isPurchased) {
+            //         const { data } = await axios(`${process.env.REACT_APP_SERVER_URL}/get-data`, {
+            //             params: { block: blkHash, ix: p.index },
+            //             withCredentials: true
+            //         });
+            //         const { proof } = data;
+            //         p.proof = reconstructProof(proof);
+            //     }
+            // }
+
+            const { data } = await axios(`${process.env.REACT_APP_SERVER_URL}/get-data`, {
+                params: { block: blkHash },
+                withCredentials: true,
+            })
+            const { proof, index } = data;
+            const globalProof = reconstructProof(proof);
             for (const p of fullParts) {
-                const isPurchased = purchasedIxs.includes(p.index);
-                if (isPurchased) {
-                    const { data } = await axios(`${process.env.REACT_APP_SERVER_URL}/get-data`, {
-                        params: { block: blkHash, ix: p.index },
-                        withCredentials: true
-                    });
-                    const { proof } = data;
-                    p.proof = reconstructProof(proof);
+                if (p.index === index || index.indexOf(p.index) !== -1) {
+                    console.log(p.index);
+                    p.proof = proofSubset(globalProof, p.index);
+                    console.log(p.proof);
                 }
             }
-
 
         } catch (err) {
             console.error(err)
@@ -333,9 +460,15 @@ export default function Sale() {
                                     }
 
                                     if (state === PartState.Offered) {
-                                        return <Button onClick={() => depositPart(index)}>deposit money</Button>;
+                                        return (<Button onClick={() => depositPart(index)}>
+                                            {price > 0 ? "deposit money" : "get data"}
+                                        </Button>);
                                     } else if (state === PartState.Considered) {
-                                        return <Button variant="danger" onClick={() => releasePart(index)}>release money</Button>;
+                                        if (price > 0) {
+                                            return <Button variant="danger" onClick={() => releasePart(index)}>release money</Button>;
+                                        }
+                                        
+                                        return <p>complete</p>;
                                     } else if (state === PartState.Accepted) {
                                         return <p>complete</p>;
                                     } else {

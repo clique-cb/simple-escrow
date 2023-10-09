@@ -11,10 +11,11 @@ import { RequestWithUser } from "./types";
 import { WEBSITE_URL } from "./config";
 
 import Escrow from "./contracts/DataEscrow.json";
+import { lutimesSync } from "fs";
 
-const publicClient = createPublicClient({ 
-  chain: sepolia,
-  transport: http()
+const publicClient = createPublicClient({
+    chain: sepolia,
+    transport: http()
 });
 
 
@@ -126,26 +127,35 @@ routes.get('/my-blocks', isAuthorized, async (req, res) => {
 routes.get('/get-data', isAuthorized, async (req, res) => {
     try {
         const { block, ix } = req.query;
-        if (!block || !ix) return res.sendStatus(400);
+        if (!block) return res.sendStatus(400);
 
         if (typeof block !== 'string') return res.sendStatus(400);
 
         const user = (req as RequestWithUser).user;
-        
+
         const blockObj = await Block.findOne({ hash: block.slice(2) });
         if (!blockObj) return res.sendStatus(404);
 
-        const index = Number(ix);
-        const hasPurchased = user.purchases.find(p => p.block === block && p.index === index);
-        if (!hasPurchased) return res.sendStatus(403);
+        let index: number | number[] = []
+        if (ix) {
+            index = Number(ix);
+            const hasPurchased = user.purchases.find(p => p.block === block && p.index === index);
+            if (!hasPurchased) return res.sendStatus(403);
+            const part = blockObj.dataParts[index];
+            if (!part) return res.sendStatus(404);
 
-        const part = blockObj.dataParts[index];
-        if (!part) return res.sendStatus(404);
+        } else {
+            const purchasedParts = user.purchases.filter(p => p.block === block)
+            if (purchasedParts.length === 0) {
+                return res.sendStatus(404);
+            }
+            index = purchasedParts.map(p => p.index)
+        }
 
         const tree = merkle.listToMerkleTree(blockObj.dataParts);
         const proof = tree.makeProof(index);
 
-        return res.status(200).json({ proof });
+        return res.status(200).json({ proof, index });
 
     } catch {
         return res.sendStatus(500);

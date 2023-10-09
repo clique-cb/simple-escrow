@@ -14,13 +14,17 @@ const app: Express = express();
 const port = process.env.PORT || 8000;
 
 async function main() {
+    console.log("Connecting to database...");
     await connectDb();
+    console.log("Connected to database.");
 
+    console.log("Connecting to Moralis...");
     await Moralis.start({
         apiKey: process.env.MORALIS_API_KEY,
     });
+    console.log("Connected to Moralis.");
 
-    app.use(express.json({limit: '200mb'}));
+    app.use(express.json({limit: '500mb'}));
     app.use(cookieParser());
     app.use(cors({
         origin: WEBSITE_URL,
