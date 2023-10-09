@@ -5,7 +5,7 @@ import { getContract, waitForTransaction } from 'wagmi/actions';
 import axios from 'axios';
 
 import { abi } from "../contract/escrow";
-import { Button, Container, Row, Table } from "react-bootstrap";
+import { Button, Container, Modal, Row, Spinner, Table } from "react-bootstrap";
 import { MerkleProofNode, restoreRoot, proofSubset } from "@clique/merkle";
 
 import { Coords, Path, decodeMap } from "../lib";
@@ -176,7 +176,7 @@ function CombinedResults({ parts }: { parts: DataPart[] }) {
 
             drawImage(ctx, imageObj);
             drawPath(ctx, curPath, true);
-            if (origin && curPath) {   
+            if (origin && curPath) {
                 ctx.font = "25px sans-serif";
                 ctx.fillStyle = "blue";
                 ctx.fillText(`${origin.x},${origin.y}`, curPath[0].x, curPath[0].y);
@@ -281,6 +281,8 @@ function displayPart(part: string): ReactElement {
 }
 
 export default function Sale() {
+    const [loadingMsg, setLoadingMsg] = useState<string | null>(null);
+
     const { contractAddr } = useParams();
     const { isConnected, isConnecting } = useAccount();
     const { connectAsync } = useConnect();
@@ -315,6 +317,7 @@ export default function Sale() {
     }, [getEscrowContract]);
 
     const getParts = useCallback(async (blkHash: string) => {
+        setLoadingMsg('Loading data');
         const escrowContract = getEscrowContract();
         const addr = walletClient!.account.address;
         const fullParts = await escrowContract.read.saleState([], { account: addr }) as DataPart[];
@@ -326,7 +329,7 @@ export default function Sale() {
             // for (const p of fullParts) {
             //     const isPurchased = purchasedIxs.includes(p.index);
             //     if (isPurchased) {
-            //         const { data } = await axios(`${process.env.REACT_APP_SERVER_URL}/get-data`, {
+            //         const { data e} = await axios(`${process.env.REACT_APP_SERVER_URL}/get-data`, {
             //             params: { block: blkHash, ix: p.index },
             //             withCredentials: true
             //         });
@@ -355,9 +358,11 @@ export default function Sale() {
 
         console.log(fullParts);
         setParts(fullParts);
+        setLoadingMsg(null);
     }, [getEscrowContract]);
 
     const depositPart = useCallback(async (index: number) => {
+        setLoadingMsg('Depositing money: please, confirm transaction in MetaMask')
         const escrowContract = getEscrowContract();
         const addr = walletClient!.account.address;
         const part = parts.find((p) => p.index === index);
@@ -375,8 +380,13 @@ export default function Sale() {
 
         // @ts-ignore
         const txId = await walletClient!.writeContract(request);
+
+        setLoadingMsg('Waiting for transaction to be confirmed');
+
         const txRes = await waitForTransaction({ hash: txId });
         console.log(txRes);
+
+        setLoadingMsg('Claiming purchase on server');
 
         await axios.put(`${process.env.REACT_APP_SERVER_URL}/claim-purchase`, {
             block: blockHash,
@@ -385,9 +395,11 @@ export default function Sale() {
         }, { withCredentials: true });
 
         await getParts(blockHash!);
+        setLoadingMsg(null);
     }, [parts, getEscrowContract]);
 
     const releasePart = useCallback(async (index: number) => {
+        setLoadingMsg('Releasing money: please, confirm transaction in MetaMask');
         const escrowContract = getEscrowContract();
         const addr = walletClient!.account.address;
         const part = parts.find((p) => p.index === index);
@@ -400,22 +412,31 @@ export default function Sale() {
 
         // @ts-ignore
         const txId = await walletClient!.writeContract(request);
+
+        setLoadingMsg('Waiting for transaction to be confirmed');
+
         const txRes = await waitForTransaction({ hash: txId });
         console.log(txRes);
 
         await getParts(blockHash!);
+        setLoadingMsg(null);
 
     }, [parts, getEscrowContract])
 
     useEffect(() => {
         if (!walletClient && !isConnecting && !isConnected) {
-            signIn(connectAsync, signMessageAsync);
+            try {
+                signIn(connectAsync, signMessageAsync);
+            } catch (err) {
+                console.error(err);
+            }
         }
     }, [walletClient, isConnecting, isConnected, connectAsync, signMessageAsync]);
 
     useEffect(() => {
         if (isConnected && walletClient) {
-            getBlockHash().then(getParts);
+            setLoadingMsg('Loading contract');
+            getBlockHash().then(getParts).then(() => setLoadingMsg(null));
         }
     }, [contractAddr, isConnected, walletClient])
 
@@ -428,61 +449,71 @@ export default function Sale() {
     // }
 
     return (
-        <Container fluid>
-            <h1>welcome to sale</h1>
-            <p>get test ETH <a href="https://sepoliafaucet.com/">here</a></p>
-            <p>merkle hash: {blockHash}</p>
-            <a href={`https://sepolia.etherscan.io/address/${contractAddr}`} target='blank'>contract</a>
-            <CombinedResults parts={parts} />
-            <Table>
-                <thead>
-                    <tr>
-                        <th>index</th>
-                        <th>price</th>
-                        <th>deposit</th>
-                        <th>can buy</th>
-                        <th></th>
-                        <th>validity</th>
-                        <th>content</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {parts.map(({ index, price, deposit, state, canBuy, proof }) => (
-                        <tr key={index}>
-                            <td>{index}</td>
-                            <td>{formatEther(price)} ETH</td>
-                            <td>{deposit ? formatEther(deposit) : 0} ETH</td>
-                            <td>{canBuy ? 'yes' : 'no'}</td>
-                            <td>{
-                                (() => {
-                                    if (!canBuy) {
-                                        return '';
-                                    }
-
-                                    if (state === PartState.Offered) {
-                                        return (<Button onClick={() => depositPart(index)}>
-                                            {price > 0 ? "deposit money" : "get data"}
-                                        </Button>);
-                                    } else if (state === PartState.Considered) {
-                                        if (price > 0) {
-                                            return <Button variant="danger" onClick={() => releasePart(index)}>release money</Button>;
-                                        }
-                                        
-                                        return <p>complete</p>;
-                                    } else if (state === PartState.Accepted) {
-                                        return <p>complete</p>;
-                                    } else {
-                                        return <p>rejected</p>;
-                                    }
-                                })()
-                            }
-                            </td>
-                            <td>{(proof && blockHash) ? (isValidRoot(proof, blockHash) ? 'valid' : 'invalid') : ''}</td>
-                            <td>{proof ? displayPart(getValues(proof)[0]) : ''}</td>
+        <>
+            <Container fluid>
+                <h1>welcome to sale</h1>
+                <p>get test ETH <a href="https://sepoliafaucet.com/">here</a></p>
+                <p>merkle hash: {blockHash}</p>
+                <a href={`https://sepolia.etherscan.io/address/${contractAddr}`} target='blank'>contract</a>
+                <CombinedResults parts={parts} />
+                <Table>
+                    <thead>
+                        <tr>
+                            <th>index</th>
+                            <th>price</th>
+                            <th>deposit</th>
+                            <th>can buy</th>
+                            <th></th>
+                            <th>validity</th>
+                            <th>content</th>
                         </tr>
-                    ))}
-                </tbody>
-            </Table>
-        </Container>
+                    </thead>
+                    <tbody>
+                        {parts.map(({ index, price, deposit, state, canBuy, proof }) => (
+                            <tr key={index}>
+                                <td>{index}</td>
+                                <td>{formatEther(price)} ETH</td>
+                                <td>{deposit ? formatEther(deposit) : 0} ETH</td>
+                                <td>{canBuy ? 'yes' : 'no'}</td>
+                                <td>{
+                                    (() => {
+                                        if (!canBuy) {
+                                            return '';
+                                        }
+
+                                        if (state === PartState.Offered) {
+                                            return (<Button onClick={() => depositPart(index)}>
+                                                {price > 0 ? "deposit money" : "get data"}
+                                            </Button>);
+                                        } else if (state === PartState.Considered) {
+                                            if (price > 0) {
+                                                return <Button variant="danger" onClick={() => releasePart(index)}>release money</Button>;
+                                            }
+
+                                            return <p>complete</p>;
+                                        } else if (state === PartState.Accepted) {
+                                            return <p>complete</p>;
+                                        } else {
+                                            return <p>rejected</p>;
+                                        }
+                                    })()
+                                }
+                                </td>
+                                <td>{(proof && blockHash) ? (isValidRoot(proof, blockHash) ? 'valid' : 'invalid') : ''}</td>
+                                <td>{proof ? displayPart(getValues(proof)[0]) : ''}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </Table>
+            </Container>
+            <Modal show={loadingMsg !== null}>
+                <Modal.Header>
+                    <Modal.Title>
+                        Loading <Spinner animation="border" role="status"><span className="visually-hidden">Loading...</span></Spinner>
+                    </Modal.Title>
+                </Modal.Header>
+                <Modal.Body>{loadingMsg}</Modal.Body>
+            </Modal>
+        </>
     )
 }
